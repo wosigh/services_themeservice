@@ -29,9 +29,11 @@
 
 #include <luna_service.h>
 
+#undef DEBUG
 bool register_commands(LSPalmService *serviceHandle, LSError lserror);
 const char 		*dbusAddress 		= "org.webosinternals.thmapi";
 const char    *themes_base    = "/media/internal/.themes";
+const char    *theme_link     = "/var/.theme";
 char *theme = NULL;
 
 //GHashTable *default_icons;
@@ -97,50 +99,26 @@ int main(int argc, char *argv[]) {
 
 char *get_icon_path(const char *appid, const char *icon) {
   char *icon_path = NULL;
-  FILE *fd;
+  FILE *fd = NULL;
   char png_header[8];
-  char *theme_dir = NULL;
-  int use_default = 0;
-  char *current_theme = NULL;
-  const char *icon_base = NULL;
-  const char *tmp = NULL;
+  const char *default_icon;
    
-  // Is the current launch icon themed ?
-  if (!strncmp(icon, themes_base, strlen(themes_base))) {
-    tmp = &icon[strlen(themes_base)+1];
-    icon_base = strchr(tmp, '/');
-    current_theme = malloc(icon_base - tmp + 1);
-    snprintf(current_theme, icon_base - tmp, "%s", tmp);
-  }
-  else {
-    icon_base = icon;
-  }
+  if (!strncmp(icon, theme_link, strlen(theme_link)))
+    default_icon = &icon[strlen(theme_link)];
+  else
+    default_icon = icon;
 
 #ifdef DEBUG
-  printf("icon base %s\n", icon_base);
-  printf("current theme %s\n", current_theme);
-  printf("theme %s\n", theme);
+  printf("get icon path for theme: %s\n", theme);
+  printf("default icon %s\n", default_icon);
 #endif
 
-  // If the current theme does not match the requested theme, adjust the icon path
-  if ((theme && !current_theme) || (!theme && current_theme) || 
-      (theme && current_theme && strcmp(current_theme, theme))) {
-    if (theme) 
-      asprintf(&icon_path, "%s/%s%s", themes_base, theme, icon_base);
-    else
-      asprintf(&icon_path, icon_base);
-  }
-
-  // If the icon path has been adjusted, check if there is a PNG in the new icon path.
-  // If there is not a PNG in the new icon path, and the current icon is themed, use the default base icon
-  if (icon_path) {
+  if (theme) {
+    asprintf(&icon_path, "%s%s", theme_link, default_icon);
     fd = fopen(icon_path, "rb");
     if (!fd) {
       free(icon_path);
       icon_path = NULL;
-      if (current_theme) {
-        asprintf(&icon_path, "%s", icon_base);
-      }
     }
     else {
       fread(png_header, 1, 8, fd);
@@ -149,53 +127,14 @@ char *get_icon_path(const char *appid, const char *icon) {
       if (png_sig_cmp(png_header, 0, 8)) {
         free(icon_path);
         icon_path = NULL;
-        if (current_theme) {
-          asprintf(&icon_path, "%s", icon_base);
-        }
       }
     }
   }
 
-  free(current_theme);
-  return icon_path;
-
-#if 0
-  asprintf(&theme_dir, "%s/%s", themes_base, theme);
-  is_themed = !strncmp(icon, theme_dir, strlen(theme_dir));
-
-  if (!is_themed)
-    asprintf(&icon_path, "%s%s", theme_dir, icon);
-  else
-    icon_path = strdup(icon);
-
-  fd = fopen(icon_path, "rb");
-  if (!fd)
-    use_default = 1;
-
-  if (!use_default) {
-    fread(png_header, 1, 8, fd);
-    fclose(fd);
-
-    if (png_sig_cmp(png_header, 0, 8))
-      use_default = 1;
-  }
-
-  if (is_themed) {
-    //free(icon_path);
-    if (use_default)
-      asprintf(&icon_path, "%s", &icon[strlen(theme_dir)]);
-    else {
-      free(icon_path);
-      icon_path = NULL;
-    }
-  }
-  else if (use_default) {
-    free(icon_path);
-    icon_path = NULL;
-  }
+  if (!icon_path)
+    icon_path = strdup(default_icon);
 
   return icon_path;
-#endif
 }
 
 void set_launch_icon(const char *appid, const char *launchPointId, const char *icon) {
@@ -271,10 +210,20 @@ bool got_launch_points(LSHandle *lshandle, LSMessage *reply, void *ctx) {
 
   LSCall(priv_serviceHandle, uri, "{}", NULL, NULL, NULL, &lserror);
 
-  free(theme);
-  theme = NULL;
-  //LSMessageReply(pub_serviceHandle, reply, "{\"returnValue\":-1, \"errorText\":\"Cannot open themes dir\"}", &lserror);
   return true;
+}
+
+bool currentTheme(LSHandle* lshandle, LSMessage *message, void *ctx) {
+  LSError lserror;
+  LSErrorInit(&lserror);
+  char *jsonResponse = NULL;
+
+  if (theme)
+    asprintf(&jsonResponse, "{\"returnValue\":0, \"name\":\"%s\"}", theme);
+  else
+    asprintf(&jsonResponse, "{\"returnValue\":0, \"name\":\"\"}");
+
+  LSMessageRespond(message, jsonResponse, &lserror);
 }
 
 bool getThemesList(LSHandle* lshandle, LSMessage *message, void *ctx) {
@@ -312,22 +261,38 @@ bool getThemesList(LSHandle* lshandle, LSMessage *message, void *ctx) {
   return true;
 }
 
-bool updateIcons(LSHandle* lshandle, LSMessage *message, void *ctx) {
+bool setTheme(LSHandle* lshandle, LSMessage *message, void *ctx) {
   LSError lserror;
   LSErrorInit(&lserror);
   const char *uri = "luna://com.palm.applicationManager/listLaunchPoints";
   json_t *object = LSMessageGetPayloadJSON(message);
   char *tmp = NULL;
 
-  json_get_string(object, "theme", &tmp);
+  json_get_string(object, "name", &tmp);
 
-  if (strlen(tmp) > 0) 
+  if (theme) {
+    free(theme);
+    theme = NULL;
+  }
+
+  if (strlen(tmp) > 0) {
     theme = strdup(tmp);
+  }
 
 #ifdef DEBUG
   printf("update Icons to theme %s\n", theme);
 #endif
   if (tmp) {
+    unlink(theme_link);
+
+    if (theme) {
+      char *theme_dir = NULL;
+
+      asprintf(&theme_dir, "%s/%s", themes_base, theme);
+      symlink(theme_dir, theme_link);
+      free(theme_dir);
+    }
+
     LSCall(priv_serviceHandle, uri, "{}", got_launch_points, theme, NULL, &lserror);
     LSMessageRespond(message,"{\"returnValue\":0}",&lserror);
   }
@@ -337,8 +302,9 @@ bool updateIcons(LSHandle* lshandle, LSMessage *message, void *ctx) {
 }
 
 LSMethod lscommandmethods[] = {
-		{"updateIcons", updateIcons},
+		{"setTheme", setTheme},
     {"getThemesList", getThemesList},
+    {"currentTheme", currentTheme},
 		{0,0}
 };
 
