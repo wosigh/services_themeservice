@@ -353,7 +353,6 @@ bool setTheme(LSHandle* lshandle, LSMessage *message, void *ctx) {
       free(theme_dir);
     }
 
-    printf("setup for theme %s\n", myTheme.name);
     LSCall(priv_serviceHandle, uri, "{}", setup_launch_icons, NULL, NULL, &lserror);
     LSMessageRespond(message,"{\"returnValue\":0}",&lserror);
   }
