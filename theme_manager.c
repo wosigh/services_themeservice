@@ -198,7 +198,7 @@ void luna_service_start() {
 }
 
 void luna_service_cleanup() {
-  //TODO free myTheme
+  //TODO clean up
 }
 
 int main(int argc, char *argv[]) {
@@ -297,14 +297,12 @@ int get_theme_json() {
         icon = g_hash_table_lookup(myTheme.icons, hash_key);
 
         if (icon) {
-          printf("CHANGE theme icon %s, %s\n", hash_key, iconPath);
           if (icon->theme_icon && strcmp(iconPath, icon->theme_icon)) {
             free(icon->theme_icon);
             icon->theme_icon = NULL;
           }
           if (!icon->theme_icon) {
             icon->theme_icon = strdup(iconPath);
-            printf("theme icon %s\n", icon->theme_icon);
             g_hash_table_insert(myTheme.icons, hash_key, icon);
           }
         }
